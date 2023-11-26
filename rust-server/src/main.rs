@@ -1,8 +1,5 @@
 use quiche;
 use ring::rand::*;
-use url::{self, Url};
-use mio::net::UdpSocket;
-use mio::Poll;
 use std::net;
 use std::collections::HashMap;
 const MAX_DATAGRAM_SIZE: usize = 1350;
@@ -80,7 +77,7 @@ fn main(){
         poll.poll(&mut events,timeout).unwrap();
 
         'read: loop{
-            if(events.is_empty()){
+            if events.is_empty() {
                 println!("Timed out");
                 clients.values_mut().for_each(|c| c.conn.on_timeout());
                 break 'read;
@@ -89,7 +86,7 @@ fn main(){
             let (len,from) = match socket.recv_from(&mut buf){
                 Ok(v) => v,
                 Err(e) => {
-                    if(e.kind()==std::io::ErrorKind::WouldBlock){
+                    if e.kind()==std::io::ErrorKind::WouldBlock {
                         println!("recv() would block");
                         break 'read;
                     }
@@ -223,7 +220,7 @@ fn main(){
                 to: socket.local_addr().unwrap(),
                 from,
             };
-            let read = match client.conn.recv(pkt_buf, recv_info) {
+            let _read = match client.conn.recv(pkt_buf, recv_info) {
                 Ok(v) => v,
 
                 Err(e) => {
