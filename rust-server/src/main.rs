@@ -305,7 +305,6 @@ fn main(){
 
                     panic!("send() failed: {:?}", e);
                 }
-
                 println!("{} written {} bytes", client.conn.trace_id(), write);
             }
         }
@@ -376,7 +375,7 @@ fn handle_stream(client: &mut Client, stream_id: u64, buf: &[u8], root: &str) {
     let uri = String::from(uri.lines().next().unwrap());
     println!("Data received:{}",uri);
 
-
+    let uri = "ABCD";
     // let mut ss_str: String = Alphanumeric.sample_string(&mut rand::thread_rng(), MAX_DATAGRAM_SIZE - 4).to_owned();
     // ss_str.push_str("GET ");
     let body = (uri.as_bytes()).to_vec();

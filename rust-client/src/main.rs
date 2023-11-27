@@ -1,5 +1,7 @@
 use quiche;
 use ring::rand::*;
+use qlog::Qlog;
+use qlog::*;
 const MAX_DATAGRAM_SIZE: usize = 5000; //max
 use rand::distributions::{Alphanumeric, DistString};
 
@@ -12,7 +14,6 @@ fn main(){
     config.set_max_idle_timeout(5000);
     config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
-    config.set_max_pacing_rate(1);
     config.set_initial_max_data(10_000_000);
     config.set_initial_max_stream_data_bidi_local(1_000_000);
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
@@ -45,6 +46,21 @@ fn main(){
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();
     
+    // if let Some(dir) = std::env::var_os("QLOGDIR") {
+    //     let id = format!("{scid:?}");
+    //     let writer = make_qlog_writer(&dir, "client", &id);
+    //     conn.set_qlog(
+    //         std::boxed::Box::new(writer),
+    //         "quiche-client qlog".to_string(),
+    //         format!("{} id={}", "quiche-client qlog", id),
+    //     );
+    // }
+
+    // if let Some(session_file) = &args.session_file {
+    //     if let Ok(session) = std::fs::read(session_file) {
+    //         conn.set_session(&session).ok();
+    //     }
+    // }
 
     println!(
         "connecting to {:} from {:} with scid {}",
@@ -111,9 +127,6 @@ fn main(){
                     continue 'read;
                 },
             };
-            
-
-            println!("processed {} bytes", read);
         }
         println!("BUFFER: {}",std::string::String::from_utf8_lossy(&buf));
         println!("done reading");
@@ -121,16 +134,6 @@ fn main(){
         if conn.is_closed() {
             println!("connection closed, {:?}", conn.stats());
             break;
-        }
-
-        // Send an HTTP request as soon as the connection is established.
-        if conn.is_established() && !req_sent {
-            let mut ss_str: String = Alphanumeric.sample_string(&mut rand::thread_rng(), MAX_DATAGRAM_SIZE - 4).to_owned();
-            ss_str.push_str("GET ");
-            conn.stream_send(4, ss_str.as_bytes(), true)
-                .unwrap();
-
-            req_sent = true;
         }
 
         // Process all readable streams.
@@ -163,6 +166,18 @@ fn main(){
                 }
             }
         }
+
+        // Send an HTTP request as soon as the connection is established.
+        if conn.is_established() && !req_sent {
+            let mut ss_str: String = Alphanumeric.sample_string(&mut rand::thread_rng(), MAX_DATAGRAM_SIZE - 4).to_owned();
+            ss_str.push_str("GET ");
+            conn.stream_send(4, ss_str.as_bytes(), true)
+                .unwrap();
+
+            req_sent = true;
+        }
+
+        
 
         // Generate outgoing QUIC packets and send them on the UDP socket, until
         // quiche reports that there are no more packets to be sent.
