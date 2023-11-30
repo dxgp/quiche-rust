@@ -1,17 +1,23 @@
-use quiche;
+use std::time::Instant;
+
+use mio::net::UdpSocket;
+use quiche::{self, Connection};
 use ring::rand::*;
 use qlog::Qlog;
 use qlog::*;
-const MAX_DATAGRAM_SIZE: usize = 5000; //max
+use url::*;
+use quiche::h3::*;
+const MAX_DATAGRAM_SIZE: usize = 8192; //max
 use rand::distributions::{Alphanumeric, DistString};
+
 
 fn main(){
     let mut buf = [0;65535];
     let mut out = [0;MAX_DATAGRAM_SIZE];
     
     let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-    config.set_application_protos(&[b"http/0.9"]);
-    config.set_max_idle_timeout(5000);
+    config.set_application_protos(quiche::h3::APPLICATION_PROTOCOL).unwrap();
+    config.set_max_idle_timeout(15000);
     config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_initial_max_data(10_000_000);
@@ -22,7 +28,11 @@ fn main(){
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
     config.verify_peer(false);
+    config.enable_early_data();
+    // config.enable_hystart(false);
+    // config.enable_pacing(false);
 
+    let mut http3_conn = None;
     // Setup connection id
     let mut scid = [0;quiche::MAX_CONN_ID_LEN];
     SystemRandom::new().fill(&mut scid[..]).unwrap();
@@ -34,6 +44,7 @@ fn main(){
 
     //Setup the socket
     let peer_addr = "127.0.0.1:6653".parse().unwrap();
+    let url = Url::parse("http://127.0.0.1/files/gunjan.txt").unwrap();
     let bind_addr = match peer_addr {
         std::net::SocketAddr::V4(_) => "0.0.0.0:0",
         std::net::SocketAddr::V6(_) => "[::]:0",
@@ -41,27 +52,11 @@ fn main(){
     let mut socket = mio::net::UdpSocket::bind(bind_addr.parse().unwrap()).unwrap();
     let local_addr = socket.local_addr().unwrap();
     let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
-
+    
     poll.registry()
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();
     
-    // if let Some(dir) = std::env::var_os("QLOGDIR") {
-    //     let id = format!("{scid:?}");
-    //     let writer = make_qlog_writer(&dir, "client", &id);
-    //     conn.set_qlog(
-    //         std::boxed::Box::new(writer),
-    //         "quiche-client qlog".to_string(),
-    //         format!("{} id={}", "quiche-client qlog", id),
-    //     );
-    // }
-
-    // if let Some(session_file) = &args.session_file {
-    //     if let Ok(session) = std::fs::read(session_file) {
-    //         conn.set_session(&session).ok();
-    //     }
-    // }
-
     println!(
         "connecting to {:} from {:} with scid {}",
         peer_addr,
@@ -82,18 +77,37 @@ fn main(){
 
     println!("written {}", write);
 
+    let h3_config = quiche::h3::Config::new().unwrap();
+
+    // Prepare request.
+    let mut path = String::from(url.path());
+
+    if let Some(query) = url.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+
+    let req = vec![
+        quiche::h3::Header::new(b":method", b"GET"),
+        quiche::h3::Header::new(b":scheme", url.scheme().as_bytes()),
+        quiche::h3::Header::new(
+            b":authority",
+            url.host_str().unwrap().as_bytes(),
+        ),
+        quiche::h3::Header::new(b":path", path.as_bytes()),
+        quiche::h3::Header::new(b"user-agent", b"quiche"),
+    ];
+
+    println!("REQUEST CREATED:{:?}",req);
+
     let req_start = std::time::Instant::now();
 
     let mut req_sent = false;
+
+    
     loop {
         poll.poll(&mut events, conn.timeout()).unwrap();
-
-        // Read incoming UDP packets from the socket and feed them to quiche,
-        // until there are no more packets to read.
         'read: loop {
-            // If the event loop reported no events, it means that the timeout
-            // has expired, so handle it without attempting to read packets. We
-            // will then proceed with the send loop.
             if events.is_empty() {
                 println!("timed out");
                 conn.on_timeout();
@@ -103,8 +117,10 @@ fn main(){
             let (len, from) = match socket.recv_from(&mut buf) {
                 Ok(v) => v,
                 Err(e) => {
+                    // There are no more UDP packets to read, so end the read
+                    // loop.
                     if e.kind() == std::io::ErrorKind::WouldBlock {
-                        println!("No more UDP packets to read...");
+                        println!("recv() would block");
                         break 'read;
                     }
 
@@ -115,20 +131,22 @@ fn main(){
             println!("got {} bytes", len);
 
             let recv_info = quiche::RecvInfo {
-                to: socket.local_addr().unwrap(),
+                to: local_addr,
                 from,
             };
 
             // Process potentially coalesced packets.
             let read = match conn.recv(&mut buf[..len], recv_info) {
                 Ok(v) => v,
+
                 Err(e) => {
                     println!("recv failed: {:?}", e);
                     continue 'read;
                 },
             };
+            println!("processed {} bytes", read);
         }
-        println!("BUFFER: {}",std::string::String::from_utf8_lossy(&buf));
+
         println!("done reading");
 
         if conn.is_closed() {
@@ -136,79 +154,92 @@ fn main(){
             break;
         }
 
-        // Process all readable streams.
-        for s in conn.readable() {
-            while let Ok((read, fin)) = conn.stream_recv(s, &mut buf) {
-                println!("received {} bytes", read);
+        // Create a new HTTP/3 connection once the QUIC connection is established.
+        if conn.is_established() && http3_conn.is_none() {
+            http3_conn = Some(
+                quiche::h3::Connection::with_transport(&mut conn, &h3_config)
+                .expect("Unable to create HTTP/3 connection, check the server's uni stream limit and window size"),
+            );
+        }
 
-                let stream_buf = &buf[..read];
+        // // Send HTTP requests once the QUIC connection is established, and until
+        // // all requests have been sent.
+        if let Some(h3_conn) = &mut http3_conn {
+            if !req_sent {
+                println!("sending HTTP request {:?}", req);
 
-                println!(
-                    "stream {} has {} bytes (fin? {})",
-                    s,
-                    stream_buf.len(),
-                    fin
-                );
+                h3_conn.send_request(&mut conn, &req, true).unwrap();
 
-                print!("{}", unsafe {
-                    std::str::from_utf8_unchecked(stream_buf)
-                });
-
-                // The server reported that it has no more data to send, which
-                // we got the full response. Close the connection.
-                if s == 4 && fin {
-                    println!(
-                        "response received in {:?}, closing...",
-                        req_start.elapsed()
-                    );
-
-                    conn.close(true, 0x00, b"kthxbye").unwrap();
-                }
+                req_sent = true;
             }
         }
 
-        // Send an HTTP request as soon as the connection is established.
-        if conn.is_established() && !req_sent {
-            let mut ss_str: String = Alphanumeric.sample_string(&mut rand::thread_rng(), MAX_DATAGRAM_SIZE - 4).to_owned();
-            ss_str.push_str("GET ");
-            conn.stream_send(4, ss_str.as_bytes(), true)
-                .unwrap();
+        // if let Some(http3_conn) = &mut http3_conn {
+        //     // Process HTTP/3 events.
+        //     loop {
+        //         match http3_conn.poll(&mut conn) {
+        //             Ok((stream_id, quiche::h3::Event::Headers { list, .. })) => {
+        //                 println!(
+        //                     "got response headers {:?} on stream id {}",
+        //                     hdrs_to_strings(&list),
+        //                     stream_id
+        //                 );
+        //             },
 
-            req_sent = true;
-        }
+        //             Ok((stream_id, quiche::h3::Event::Data)) => {
+        //                 while let Ok(read) =
+        //                     http3_conn.recv_body(&mut conn, stream_id, &mut buf)
+        //                 {
+        //                     println!(
+        //                         "got {} bytes of response data on stream {}",
+        //                         read, stream_id
+        //                     );
 
-        
+        //                     // print!("{}", unsafe {
+        //                     //     std::str::from_utf8_unchecked(&buf[..read])
+        //                     // });
+        //                 }
+        //             },
 
-        // Generate outgoing QUIC packets and send them on the UDP socket, until
-        // quiche reports that there are no more packets to be sent.
-        loop {
-            let (write, send_info) = match conn.send(&mut out) {
-                Ok(v) => v,
+        //             Ok((_stream_id, quiche::h3::Event::Finished)) => {
+        //                 println!(
+        //                     "response received in {:?}, closing...",
+        //                     req_start.elapsed()
+        //                 );
 
-                Err(quiche::Error::Done) => {
-                    println!("done writing");
-                    break;
-                },
+        //                 conn.close(true, 0x100, b"kthxbye").unwrap();
+        //             },
 
-                Err(e) => {
-                    println!("send failed: {:?}", e);
+        //             Ok((_stream_id, quiche::h3::Event::Reset(e))) => {
+        //                 println!(
+        //                     "request was reset by peer with {}, closing...",
+        //                     e
+        //                 );
 
-                    conn.close(false, 0x1, b"fail").ok();
-                    break;
-                },
-            };
+        //                 conn.close(true, 0x100, b"kthxbye").unwrap();
+        //             },
 
-            if let Err(e) = socket.send_to(&out[..write], send_info.to) {
-                if e.kind() == std::io::ErrorKind::WouldBlock {
-                    println!("No more UDP Packets to send...");
-                    break;
-                }
+        //             Ok((_, quiche::h3::Event::PriorityUpdate)) => unreachable!(),
 
-                panic!("send() failed: {:?}", e);
-            }
+        //             Ok((goaway_id, quiche::h3::Event::GoAway)) => {
+        //                 println!("GOAWAY id={}", goaway_id);
+        //             },
 
-            println!("written {}", write);
-        }
+        //             Err(quiche::h3::Error::Done) => {
+        //                 break;
+        //             },
+
+        //             Err(e) => {
+        //                 println!("HTTP/3 processing failed: {:?}", e);
+
+        //                 break;
+        //             },
+        //         }
+        //     }
+        // }
+        process_http3_events(&mut http3_conn, &mut conn, &mut buf, req_start);
+
+        send_written_packets(&mut conn, &socket,&mut out);
 
         if conn.is_closed() {
             println!("connection closed, {:?}", conn.stats());
@@ -217,8 +248,131 @@ fn main(){
     }
 }
 
+fn process_http3_events(http3_conn: &mut Option<quiche::h3::Connection>,conn: &mut Connection,buf: &mut[u8;65535],req_start: Instant){
+    if let Some(http3_conn) = http3_conn {
+        // Process HTTP/3 events.
+        loop {
+            match http3_conn.poll(conn) {
+                Ok((stream_id, quiche::h3::Event::Headers { list, .. })) => {
+                    println!(
+                        "got response headers {:?} on stream id {}",
+                        hdrs_to_strings(&list),
+                        stream_id
+                    );
+                },
+
+                Ok((stream_id, quiche::h3::Event::Data)) => {
+                    while let Ok(read) =
+                        http3_conn.recv_body(conn, stream_id, buf)
+                    {
+                        println!(
+                            "got {} bytes of response data on stream {}",
+                            read, stream_id
+                        );
+                        print!("{}", unsafe {std::str::from_utf8_unchecked(&buf[..read])});
+                    }
+                },
+
+                Ok((_stream_id, quiche::h3::Event::Finished)) => {
+                    println!(
+                        "response received in {:?}, closing...",
+                        req_start.elapsed()
+                    );
+
+                    conn.close(true, 0x100, b"kthxbye").unwrap();
+                },
+
+                Ok((_stream_id, quiche::h3::Event::Reset(e))) => {
+                    println!(
+                        "request was reset by peer with {}, closing...",
+                        e
+                    );
+
+                    conn.close(true, 0x100, b"kthxbye").unwrap();
+                },
+
+                Ok((_, quiche::h3::Event::PriorityUpdate)) => unreachable!(),
+
+                Ok((goaway_id, quiche::h3::Event::GoAway)) => {
+                    println!("GOAWAY id={}", goaway_id);
+                },
+
+                Err(quiche::h3::Error::Done) => {
+                    break;
+                },
+
+                Err(e) => {
+                    println!("HTTP/3 processing failed: {:?}", e);
+
+                    break;
+                },
+            }
+        }
+    }
+}
+
+fn send_written_packets(conn: &mut Connection,socket: &UdpSocket,out: &mut [u8;MAX_DATAGRAM_SIZE]){
+    loop {
+        let (write, send_info) = match conn.send(out) {
+            Ok(v) => v,
+
+            Err(quiche::Error::Done) => {
+                println!("done writing");
+                break;
+            },
+
+            Err(e) => {
+                println!("send failed: {:?}", e);
+                conn.close(false, 0x1, b"fail").ok();
+                break;
+            },
+        };
+
+        if let Err(e) = socket.send_to(&out[..write], send_info.to) {
+            if e.kind() == std::io::ErrorKind::WouldBlock {
+                println!("send() would block");
+                break;
+            }
+
+            panic!("send() failed: {:?}", e);
+        }
+
+        println!("written {}", write);
+    }
+}
+
+
+
 fn hex_dump(buf: &[u8]) -> String {
     let vec: Vec<String> = buf.iter().map(|b| format!("{b:02x}")).collect();
 
     vec.join("")
+}
+
+pub fn hdrs_to_strings(hdrs: &[quiche::h3::Header]) -> Vec<(String, String)> {
+    hdrs.iter()
+        .map(|h| {
+            let name = String::from_utf8_lossy(h.name()).to_string();
+            let value = String::from_utf8_lossy(h.value()).to_string();
+
+            (name, value)
+        })
+        .collect()
+}
+
+pub fn make_qlog_writer(
+    dir: &std::ffi::OsStr, role: &str, id: &str,
+) -> std::io::BufWriter<std::fs::File> {
+    let mut path = std::path::PathBuf::from(dir);
+    let filename = format!("{role}-{id}.sqlog");
+    path.push(filename);
+
+    match std::fs::File::create(&path) {
+        Ok(f) => std::io::BufWriter::new(f),
+
+        Err(e) => panic!(
+            "Error creating qlog file attempted path was {:?}: {}",
+            path, e
+        ),
+    }
 }

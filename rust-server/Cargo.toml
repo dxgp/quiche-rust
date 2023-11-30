@@ -5,10 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+
 [dependencies]
-quiche = "0.19.0"
+quiche = {version="0.19.0", features = ["qlog"]}
 ring = "0.16.20"
 mio = {version="0.8.0", features = ["net","os-poll"]}
 url = "2.5.0"
 rand = "0.8.5"
-qlog = "0.10.0"

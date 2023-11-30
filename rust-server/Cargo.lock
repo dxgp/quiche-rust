@@ -378,6 +378,7 @@ dependencies = [
  "log",
  "octets",
  "once_cell",
+ "qlog",
  "ring",
  "slab",
  "smallvec",
@@ -443,7 +444,6 @@ name = "rust-server"
 version = "0.1.0"
 dependencies = [
  "mio",
- "qlog",
  "quiche",
  "rand",
  "ring",
