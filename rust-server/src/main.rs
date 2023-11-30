@@ -57,6 +57,7 @@ fn main(){
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
     config.enable_early_data();
+    config.set_cc_algorithm_name("bbr");
     // config.enable_hystart(false);
     // config.enable_pacing(false);
     
@@ -217,8 +218,8 @@ fn main(){
                         panic!("send() failed: {:?}", e);
                     }
                     retry_done = true;
-                    println!("now sleeping....");
-                    std::thread::sleep(time::Duration::from_secs(10));
+                    // println!("now sleeping....");
+                    // std::thread::sleep(time::Duration::from_secs(10));
                     continue 'read;
                 }
 
