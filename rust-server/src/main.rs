@@ -59,10 +59,10 @@ fn main(){
     config.set_initial_max_stream_data_uni(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
-    config.set_disable_active_migration(true);
+    // config.set_disable_active_migration(true);
     config.enable_early_data();
     config.set_cc_algorithm_name(cc_algo);
-    // config.enable_hystart(false);
+    config.enable_hystart(false);
     config.enable_pacing(false);
     
     let mut keylog = None;
@@ -98,6 +98,7 @@ fn main(){
 
     
     loop {
+
         // Find the shorter timeout from all the active connections.
         //
         // TODO: use event loop that properly supports timers
@@ -112,7 +113,7 @@ fn main(){
             // has expired, so handle it without attempting to read packets. We
             // will then proceed with the send loop.
             if events.is_empty() {
-                println!("timed out");
+                //println!("timed out");
 
                 clients.values_mut().for_each(|c| c.conn.on_timeout());
 
@@ -126,7 +127,7 @@ fn main(){
                     // There are no more UDP packets to read, so end the read
                     // loop.
                     if e.kind() == std::io::ErrorKind::WouldBlock {
-                        println!("recv() would block");
+                        //println!("recv() would block");
                         break 'read;
                     }
 
@@ -134,7 +135,7 @@ fn main(){
                 },
             };
 
-            println!("got {} bytes", len);
+            //println!("got {} bytes", len);
 
             let pkt_buf = &mut buf[..len];
 
@@ -151,7 +152,7 @@ fn main(){
                 },
             };
 
-            println!("got packet {:?}", hdr);
+            //println!("got packet {:?}", hdr);
 
             let conn_id = ring::hmac::sign(&conn_id_seed, &hdr.dcid);
             let conn_id = &conn_id.as_ref()[..quiche::MAX_CONN_ID_LEN];
@@ -163,12 +164,12 @@ fn main(){
                 !clients.contains_key(&conn_id)
             {
                 if hdr.ty != quiche::Type::Initial {
-                    println!("Packet is not Initial");
+                    //println!("Packet is not Initial");
                     continue 'read;
                 }
 
                 if !quiche::version_is_supported(hdr.version) {
-                    println!("Doing version negotiation");
+                    //println!("Doing version negotiation");
 
                     let len =
                         quiche::negotiate_version(&hdr.scid, &hdr.dcid, &mut out)
@@ -178,7 +179,7 @@ fn main(){
 
                     if let Err(e) = socket.send_to(out, from) {
                         if e.kind() == std::io::ErrorKind::WouldBlock {
-                            println!("send() would block");
+                            //println!("send() would block");
                             break;
                         }
 
@@ -197,7 +198,7 @@ fn main(){
 
                 // Do stateless retry if the client didn't send a token.
                 if token.is_empty() {
-                    println!("Doing stateless retry");
+                    //println!("Doing stateless retry");
 
                     let new_token = mint_token(&hdr, &from);
 
@@ -215,7 +216,7 @@ fn main(){
 
                     if let Err(e) = socket.send_to(out, from) {
                         if e.kind() == std::io::ErrorKind::WouldBlock {
-                            println!("send() would block");
+                            //println!("send() would block");
                             break;
                         }
 
@@ -232,12 +233,12 @@ fn main(){
                 // The token was not valid, meaning the retry failed, so
                 // drop the packet.
                 if odcid.is_none() {
-                    println!("Invalid address validation token");
+                    //println!("Invalid address validation token");
                     continue 'read;
                 }
 
                 if scid.len() != hdr.dcid.len() {
-                    println!("Invalid destination connection ID");
+                    //println!("Invalid destination connection ID");
                     continue 'read;
                 }
 
@@ -245,7 +246,7 @@ fn main(){
                 // instead of changing it again.
                 let scid = hdr.dcid.clone();
 
-                println!("New connection: dcid={:?} scid={:?}", hdr.dcid, scid);
+                //println!("New connection: dcid={:?} scid={:?}", hdr.dcid, scid);
 
                 let mut conn = quiche::accept(
                     &scid,
@@ -297,17 +298,17 @@ fn main(){
                 },
             };
 
-            println!("{} processed {} bytes", client.conn.trace_id(), read);
+            //println!("{} processed {} bytes", client.conn.trace_id(), read);
 
             // Create a new HTTP/3 connection as soon as the QUIC connection
             // is established.
             if (client.conn.is_in_early_data() || client.conn.is_established()) &&
                 client.http3_conn.is_none()
             {
-                println!(
-                    "{} QUIC handshake completed, now trying HTTP/3",
-                    client.conn.trace_id()
-                );
+                // println!(
+                //     "{} QUIC handshake completed, now trying HTTP/3",
+                //     client.conn.trace_id()
+                // );
 
                 let h3_conn = match quiche::h3::Connection::with_transport(
                     &mut client.conn,
@@ -349,11 +350,11 @@ fn main(){
                         },
 
                         Ok((stream_id, quiche::h3::Event::Data)) => {
-                            println!(
-                                "{} got data on stream id {}",
-                                client.conn.trace_id(),
-                                stream_id
-                            );
+                            // println!(
+                            //     "{} got data on stream id {}",
+                            //     client.conn.trace_id(),
+                            //     stream_id
+                            // );
                         },
 
                         Ok((_stream_id, quiche::h3::Event::Finished)) => (),
@@ -372,11 +373,11 @@ fn main(){
                         },
 
                         Err(e) => {
-                            println!(
-                                "{} HTTP/3 error {:?}",
-                                client.conn.trace_id(),
-                                e
-                            );
+                            // println!(
+                            //     "{} HTTP/3 error {:?}",
+                            //     client.conn.trace_id(),
+                            //     e
+                            // );
 
                             break;
                         },
@@ -394,7 +395,7 @@ fn main(){
                     Ok(v) => v,
 
                     Err(quiche::Error::Done) => {
-                        println!("{} done writing", client.conn.trace_id());
+                        //println!("{} done writing", client.conn.trace_id());
                         break;
                     },
 
@@ -408,31 +409,31 @@ fn main(){
 
                 if let Err(e) = socket.send_to(&out[..write], send_info.to) {
                     if e.kind() == std::io::ErrorKind::WouldBlock {
-                        println!("send() would block");
+                        //println!("send() would block");
                         break;
                     }
 
                     panic!("send() failed: {:?}", e);
                 }
 
-                println!("{} written {} bytes", client.conn.trace_id(), write);
+                //println!("{} written {} bytes", client.conn.trace_id(), write);
             }
         }
 
         // Garbage collect closed connections.
-        clients.retain(|_, ref mut c| {
-            println!("Collecting garbage");
+        // clients.retain(|_, ref mut c| {
+        //     println!("Collecting garbage");
 
-            if c.conn.is_closed() {
-                println!(
-                    "{} connection collected {:?}",
-                    c.conn.trace_id(),
-                    c.conn.stats()
-                );
-            }
+        //     if c.conn.is_closed() {
+        //         println!(
+        //             "{} connection collected {:?}",
+        //             c.conn.trace_id(),
+        //             c.conn.stats()
+        //         );
+        //     }
 
-            !c.conn.is_closed()
-        });
+        //     !c.conn.is_closed()
+        // });
     }
 }
 
@@ -500,12 +501,12 @@ fn handle_request(
     let conn = &mut client.conn;
     let http3_conn = &mut client.http3_conn.as_mut().unwrap();
 
-    println!(
-        "{} got request {:?} on stream id {}",
-        conn.trace_id(),
-        hdrs_to_strings(headers),
-        stream_id
-    );
+    // println!(
+    //     "{} got request {:?} on stream id {}",
+    //     conn.trace_id(),
+    //     hdrs_to_strings(headers),
+    //     stream_id
+    // );
 
     // We decide the response based on headers alone, so stop reading the
     // request stream so that any body is ignored and pointless Data events
@@ -578,7 +579,7 @@ fn build_response(
             _ => (),
         }
     }
-    println!("GET Request Path: {:?}",path);
+    //println!("GET Request Path: {:?}",path);
 
     let (status, body) = match method {
         Some(b"GET") => {
@@ -587,7 +588,7 @@ fn build_response(
                     file_path.push(v)
                 }
             }
-            println!("FILE PATH VARIABLE:{:?}",file_path);
+            //println!("FILE PATH VARIABLE:{:?}",file_path);
             match std::fs::read(file_path.as_path()) {
                 Ok(data) => (200, data),
 
@@ -615,7 +616,7 @@ fn handle_writable(client: &mut Client, stream_id: u64) {
     let conn = &mut client.conn;
     let http3_conn = &mut client.http3_conn.as_mut().unwrap();
 
-    println!("{} stream {} is writable", conn.trace_id(), stream_id);
+    //println!("{} stream {} is writable", conn.trace_id(), stream_id);
 
     if !client.partial_responses.contains_key(&stream_id) {
         return;

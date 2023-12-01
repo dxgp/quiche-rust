@@ -26,10 +26,10 @@ fn set_config_params(config: &mut quiche::Config){
     config.set_initial_max_stream_data_uni(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
-    config.set_disable_active_migration(true);
+    // config.set_disable_active_migration(true);
     config.verify_peer(false);
     config.enable_early_data();
-    // config.enable_hystart(false);
+    config.enable_hystart(false);
     config.enable_pacing(false);
 }
 
@@ -63,7 +63,7 @@ fn create_h3_request(url: Url)-> Vec<Header> {
         quiche::h3::Header::new(b":path", path.as_bytes()),
         quiche::h3::Header::new(b"user-agent", b"quiche"),
     ];
-    println!("REQUEST CREATED:{:?}",req);
+    //println!("REQUEST CREATED:{:?}",req);
     return req;
 }
 
@@ -71,12 +71,12 @@ fn send_initial_packet(conn: &mut Connection,out: &mut [u8;MAX_DATAGRAM_SIZE],so
     let (write, send_info) = conn.send(out).expect("initial send failed");
     while let Err(e) = socket.send_to(&out[..write], send_info.to) {
         if e.kind() == std::io::ErrorKind::WouldBlock {
-            println!("No more UDP packets to send...");
+            //println!("No more UDP packets to send...");
             continue;
         }
         panic!("send() failed: {:?}", e);
     }
-    println!("written {}", write);
+    //println!("written {}", write);
 }
 fn main(){
     let args: Vec<String> = env::args().collect();
@@ -98,24 +98,24 @@ fn main(){
     let mut poll = mio::Poll::new().unwrap();
     let mut events = mio::Events::with_capacity(1024);
 
-    // let (tx,rx):(mpsc::Sender<u64>,mpsc::Receiver<u64>) = mpsc::channel();
-    // thread::spawn(move ||{
-    //     let start = Instant::now();
-    //     let mut last_bytes = 0;
-    //     let mut last_elapsed = 0;
-    //     loop{
-    //         let new_bytes = rx.recv().unwrap();
-    //         let elapsed = start.elapsed().as_millis()+1;
-    //         let mut log_file = OpenOptions::new().append(true).create(true).open("log.txt").expect("File cannot be opened");
-    //         let bytes_diff = (new_bytes-last_bytes) as u64;
-    //         let elapsed_diff = (elapsed-last_elapsed) as u64;
-    //         let bandwidth = ((bytes_diff/elapsed_diff) *8000) as u64;
-    //         let _ = log_file.write((format!("New Bytes: {},t={},bandwidth={} B/s\n",new_bytes,elapsed,bandwidth)).as_bytes());
-    //         last_bytes = new_bytes;
-    //         last_elapsed = elapsed;
-    //         thread::sleep(time::Duration::from_millis(100));
-    //     }
-    // }); 
+    let (tx,rx):(mpsc::Sender<u64>,mpsc::Receiver<u64>) = mpsc::channel();
+    thread::spawn(move ||{
+        let start = Instant::now();
+        let mut last_bytes = 0;
+        let mut last_elapsed = 0;
+        loop{
+            let new_bytes = rx.recv().unwrap();
+            let elapsed = start.elapsed().as_millis()+1;
+            let mut log_file = OpenOptions::new().append(true).create(true).open("log.txt").expect("File cannot be opened");
+            let bytes_diff = (new_bytes-last_bytes) as u64;
+            let elapsed_diff = (elapsed-last_elapsed) as u64;
+            let bandwidth = ((bytes_diff/elapsed_diff) *8000) as u64;
+            let _ = log_file.write((format!("New Bytes: {},t={},bandwidth={} B/s\n",new_bytes,elapsed,bandwidth)).as_bytes());
+            last_bytes = new_bytes;
+            last_elapsed = elapsed;
+            thread::sleep(time::Duration::from_millis(10));
+        }
+    }); 
     //socket creation and address linking
     let local_addr: SocketAddr;
     let peer_addr: SocketAddr;
@@ -128,6 +128,8 @@ fn main(){
         .unwrap();
     
     loop{
+        let start = time::Instant::now();
+        println!("LOOP IT");
         let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
         // if let Some(dir) = std::env::var_os("QLOGDIR") {
         //     let id = format!("{scid:?}");
@@ -141,12 +143,12 @@ fn main(){
         //establish connection
         let url = Url::parse("http://127.0.0.1/files/rand.csv").unwrap();
         //debug print
-        println!(
-            "connecting to {:} from {:} with scid {}",
-            peer_addr,
-            socket.local_addr().unwrap(),
-            hex_dump(&scid)
-        );
+        // println!(
+        //     "connecting to {:} from {:} with scid {}",
+        //     peer_addr,
+        //     socket.local_addr().unwrap(),
+        //     hex_dump(&scid)
+        // );
         
         send_initial_packet(&mut conn, &mut out, &socket);// send initial packet
     
@@ -161,11 +163,11 @@ fn main(){
         loop {
             let stats = conn.stats();
             // println!("RECV BYTES:{}",stats.recv_bytes);
-            // let _ = tx.send(stats.recv_bytes+stats.sent_bytes).unwrap();
+            let _ = tx.send(stats.recv_bytes+(stats.recv as u64)*32).unwrap();
             poll.poll(&mut events, conn.timeout()).unwrap();
             read_from_socket(&mut conn, &mut buf, &socket, &events, local_addr); // read response of initial packet
             if conn.is_closed() {
-                println!("connection closed, {:?}", conn.stats());
+                println!("connection closed, {:?}, time = {}", conn.stats(),start.elapsed().as_secs());
                 break;
             }
             // Create a new HTTP/3 connection once the QUIC connection is established.
@@ -179,17 +181,17 @@ fn main(){
             // all requests have been sent.
             if let Some(h3_conn) = &mut http3_conn {
                 if !req_sent {
-                    println!("sending HTTP request {:?}", req);
-                    h3_conn.send_request(&mut conn, &req, true).unwrap();
+                    //println!("sending HTTP request {:?}", req);
+                    h3_conn.send_request(&mut conn, &req, false).unwrap();
                     req_sent = true;
                 }
             }
     
             process_http3_responses(&mut http3_conn, &mut conn, &mut buf, req_start);
             send_written_packets(&mut conn, &socket,&mut out);
-            println!("{:?}",conn.stats());
+            //println!("{:?}",conn.stats());
             if conn.is_closed() {
-                println!("connection closed, {:?}", conn.stats());
+                println!("connection closed, {:?}, time = {}", conn.stats(),start.elapsed().as_secs());
                 break;
             }
         }
