@@ -4,8 +4,8 @@ use core::time;
 use std::net;
 use std::collections::HashMap;
 use quiche::h3::*;
+use std::env;
 const MAX_DATAGRAM_SIZE: usize = 8192;
-use rand::distributions::{Alphanumeric, DistString};
 
 struct PartialResponse {
     headers: Option<Vec<quiche::h3::Header>>,
@@ -30,6 +30,10 @@ type ClientMap = HashMap<quiche::ConnectionId<'static>, Client>;
 fn main(){
     // let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
     // config.set_application_protos(&[b"example-proto"]);
+    let args: Vec<String> = env::args().collect();
+    let cc_algo = &args[1];
+
+
     let mut buf = [0;65535];
     let mut out = [0;MAX_DATAGRAM_SIZE];
     let mut retry_done = false;
@@ -57,9 +61,9 @@ fn main(){
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
     config.enable_early_data();
-    config.set_cc_algorithm_name("bbr");
+    config.set_cc_algorithm_name(cc_algo);
     // config.enable_hystart(false);
-    // config.enable_pacing(false);
+    config.enable_pacing(false);
     
     let mut keylog = None;
     if let Some(keylog_path) = std::env::var_os("SSLKEYLOGFILE") {
@@ -76,7 +80,7 @@ fn main(){
 
 
     //Setup the socket
-    let mut socket = mio::net::UdpSocket::bind("127.0.0.1:6653".parse().unwrap()).unwrap();
+    let mut socket = mio::net::UdpSocket::bind("0.0.0.0:6653".parse().unwrap()).unwrap();
     poll.registry()
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();

@@ -1,11 +1,19 @@
-use std::{time::Instant, net::SocketAddr};
+use std::sync::mpsc::Receiver;
+use std::{time::Instant, net::SocketAddr, ffi::OsString, thread};
 use mio::{net::UdpSocket, Events};
 use quiche::{self, Connection};
 use ring::rand::*;
-use testing::Session;
 use url::*;
 use quiche::h3::*;
+use std::env;
+use std::time::{self, Duration};
+use std::sync::mpsc;
 const MAX_DATAGRAM_SIZE: usize = 8192; //max
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+
 
 fn set_config_params(config: &mut quiche::Config){
     config.set_application_protos(quiche::h3::APPLICATION_PROTOCOL).unwrap();
@@ -23,7 +31,6 @@ fn set_config_params(config: &mut quiche::Config){
     config.enable_early_data();
     // config.enable_hystart(false);
     config.enable_pacing(false);
-    config.set_cc_algorithm_name("bbr");
 }
 
 #[allow(unused_mut)]
@@ -72,12 +79,16 @@ fn send_initial_packet(conn: &mut Connection,out: &mut [u8;MAX_DATAGRAM_SIZE],so
     println!("written {}", write);
 }
 fn main(){
+    let args: Vec<String> = env::args().collect();
+    let cc_algo = &args[1];
+
+
     let mut buf = [0;65535]; //total buffer
     let mut out = [0;MAX_DATAGRAM_SIZE]; //out buffer. Set to 8kB
     //create the config for quiche
     let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
     set_config_params(&mut config);
-
+    config.set_cc_algorithm_name(cc_algo);
     // Setup connection id
     let mut scid = [0;quiche::MAX_CONN_ID_LEN];
     SystemRandom::new().fill(&mut scid[..]).unwrap();
@@ -87,9 +98,24 @@ fn main(){
     let mut poll = mio::Poll::new().unwrap();
     let mut events = mio::Events::with_capacity(1024);
 
-
-    
-    
+    // let (tx,rx):(mpsc::Sender<u64>,mpsc::Receiver<u64>) = mpsc::channel();
+    // thread::spawn(move ||{
+    //     let start = Instant::now();
+    //     let mut last_bytes = 0;
+    //     let mut last_elapsed = 0;
+    //     loop{
+    //         let new_bytes = rx.recv().unwrap();
+    //         let elapsed = start.elapsed().as_millis()+1;
+    //         let mut log_file = OpenOptions::new().append(true).create(true).open("log.txt").expect("File cannot be opened");
+    //         let bytes_diff = (new_bytes-last_bytes) as u64;
+    //         let elapsed_diff = (elapsed-last_elapsed) as u64;
+    //         let bandwidth = ((bytes_diff/elapsed_diff) *8000) as u64;
+    //         let _ = log_file.write((format!("New Bytes: {},t={},bandwidth={} B/s\n",new_bytes,elapsed,bandwidth)).as_bytes());
+    //         last_bytes = new_bytes;
+    //         last_elapsed = elapsed;
+    //         thread::sleep(time::Duration::from_millis(100));
+    //     }
+    // }); 
     //socket creation and address linking
     let local_addr: SocketAddr;
     let peer_addr: SocketAddr;
@@ -101,25 +127,19 @@ fn main(){
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();
     
-    let mut exec_num = -1;
-
     loop{
-        exec_num = exec_num + 1;
         let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
-        if let Some(dir) = std::env::var_os("QLOGDIR") {
-            let id = format!("{scid:?}");
-            let writer = make_qlog_writer(&dir, "client", &id);
-
-            conn.set_qlog(
-                std::boxed::Box::new(writer),
-                "quiche-client qlog".to_string(),
-                format!("{} id={}", "quiche-client qlog", id),
-            );
-        }
+        // if let Some(dir) = std::env::var_os("QLOGDIR") {
+        //     let id = format!("{scid:?}");
+        //     let writer = make_qlog_writer(&dir, "client", &id);
+        //     conn.set_qlog(
+        //         std::boxed::Box::new(writer),
+        //         "quiche-client qlog".to_string(),
+        //         format!("{} id={}", "quiche-client qlog", id),
+        //     );
+        // }
         //establish connection
         let url = Url::parse("http://127.0.0.1/files/rand.csv").unwrap();
-
-        
         //debug print
         println!(
             "connecting to {:} from {:} with scid {}",
@@ -137,8 +157,11 @@ fn main(){
         let req_start = std::time::Instant::now();
         let mut req_sent = false;
         let mut http3_conn = None;
-    
+        
         loop {
+            let stats = conn.stats();
+            // println!("RECV BYTES:{}",stats.recv_bytes);
+            // let _ = tx.send(stats.recv_bytes+stats.sent_bytes).unwrap();
             poll.poll(&mut events, conn.timeout()).unwrap();
             read_from_socket(&mut conn, &mut buf, &socket, &events, local_addr); // read response of initial packet
             if conn.is_closed() {
