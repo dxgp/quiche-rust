@@ -9,9 +9,7 @@ const MAX_DATAGRAM_SIZE: usize = 8192;
 
 struct PartialResponse {
     headers: Option<Vec<quiche::h3::Header>>,
-
     body: Vec<u8>,
-
     written: usize,
 }
 
@@ -31,7 +29,7 @@ fn main(){
     // let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
     // config.set_application_protos(&[b"example-proto"]);
     let args: Vec<String> = env::args().collect();
-    let cc_algo = &args[1];
+    let cc_algo = &args[2];
 
 
     let mut buf = [0;65535];
@@ -62,7 +60,7 @@ fn main(){
     // config.set_disable_active_migration(true);
     config.enable_early_data();
     config.set_cc_algorithm_name(cc_algo);
-    config.enable_hystart(false);
+    // config.enable_hystart(false);
     config.enable_pacing(false);
     
     let mut keylog = None;
@@ -96,7 +94,6 @@ fn main(){
 
     let local_addr = socket.local_addr().unwrap();
 
-    
     loop {
 
         // Find the shorter timeout from all the active connections.
