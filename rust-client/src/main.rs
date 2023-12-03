@@ -1,3 +1,4 @@
+use std::fmt::format;
 use std::{time::Instant, net::SocketAddr, ffi::OsString, thread};
 use mio::{net::UdpSocket, Events};
 use quiche::{self, Connection};
@@ -234,6 +235,7 @@ fn test_fairness(cc_algo: &str){
         let mut last_elapsed = req_start.elapsed().as_secs_f64();
         let stats = conn.stats();
         let mut last_data = ((stats.recv_bytes as f64)+(stats.sent_bytes as f64)+((stats.recv+stats.sent) as f64)*32.0);
+        let mut total_time = 1;
         loop {
             // println!("RECV BYTES:{}",stats.recv_bytes);
             poll.poll(&mut events, conn.timeout()).unwrap();
@@ -275,7 +277,10 @@ fn test_fairness(cc_algo: &str){
                 let data_diff = new_data - last_data;
                 last_elapsed = new_elapsed;
                 last_data = new_data;
-                println!("Data transferred:{},Time:{:?},Bandwidth:{:?}Mbps",data_diff,time_diff,data_diff/time_diff * 8.0/1000000.0);
+                println!("Time:{:?},Data transferred:{},,Bandwidth:{:?}Mbps",total_time,data_diff,data_diff/time_diff * 8.0/1000000.0);
+                let mut results = OpenOptions::new().append(true).create(true).open("quic_bandwidth.txt").expect("File cannot be opened");
+                let _ = results.write(format!("Time:{:?},Data transferred:{},Bandwidth:{:?}\n",total_time,data_diff,data_diff/time_diff * 8.0/1000000.0).as_bytes());
+                total_time = total_time + 1;
             }
         }
         let stats = conn.stats();
