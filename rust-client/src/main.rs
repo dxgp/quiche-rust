@@ -142,7 +142,7 @@ fn main(){
     let mut mb1: Vec<f32> = Vec::new();
     let mut mb10: Vec<f32> = Vec::new();
     let mut mb100: Vec<f32> = Vec::new();
-    for i in 0..2 {
+    for i in 0..10 {
         for j in 1..9{
             let start = time::Instant::now();
             let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
