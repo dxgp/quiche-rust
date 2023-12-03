@@ -24,7 +24,6 @@ struct Client {
 type ClientMap = HashMap<quiche::ConnectionId<'static>, Client>;
 
 
-
 fn main(){
     // let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
     // config.set_application_protos(&[b"example-proto"]);
@@ -61,7 +60,7 @@ fn main(){
     config.enable_early_data();
     config.set_cc_algorithm_name(cc_algo);
     // config.enable_hystart(false);
-    config.enable_pacing(false);
+    // config.enable_pacing(false);
     
     let mut keylog = None;
     if let Some(keylog_path) = std::env::var_os("SSLKEYLOGFILE") {
@@ -100,7 +99,6 @@ fn main(){
         //
         // TODO: use event loop that properly supports timers
         let timeout = clients.values().filter_map(|c| c.conn.timeout()).min();
-
         poll.poll(&mut events, timeout).unwrap();
 
         // Read incoming UDP packets from the socket and feed them to quiche,
@@ -344,14 +342,15 @@ fn main(){
                                 &list,
                                 "",
                             );
+                            println!("GOT REQUEST ON STREAM {} with header:\n{:?}",stream_id,list);
                         },
 
                         Ok((stream_id, quiche::h3::Event::Data)) => {
-                            // println!(
-                            //     "{} got data on stream id {}",
-                            //     client.conn.trace_id(),
-                            //     stream_id
-                            // );
+                            println!(
+                                "{} got data on stream id {}",
+                                client.conn.trace_id(),
+                                stream_id
+                            );
                         },
 
                         Ok((_stream_id, quiche::h3::Event::Finished)) => (),
