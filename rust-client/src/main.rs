@@ -47,8 +47,8 @@ fn test_cc_time(cc_algo: &str,rf_name:&str){
     let mut mb1: Vec<f32> = Vec::new();
     let mut mb10: Vec<f32> = Vec::new();
     let mut mb100: Vec<f32> = Vec::new();
-    for i in 0..10 {
-        for j in 1..8{
+    for i in 0..5 {
+        for j in 0..8{
             let start = time::Instant::now();
             let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
             // if let Some(dir) = std::env::var_os("QLOGDIR") {
@@ -121,26 +121,35 @@ fn test_cc_time(cc_algo: &str,rf_name:&str){
                 }
                 //let _ = tx.send((stats.recv_bytes as f64)+(stats.sent_bytes as f64)+((stats.recv+stats.sent) as f64)*32.0).unwrap();
             }
-            if sizes[j]=="5KB" {
+            if j==0 {
                 kb5.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="10KB"{
+            } else if j==1{
                 kb10.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="100KB"{
+            } else if j==2{
                 kb100.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="200KB"{
+            } else if j==3{
                 kb200.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="500KB"{
+            } else if j==4{
                 kb500.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="1MB"{
+            } else if j==5{
                 mb1.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="10MB"{
+            } else if j==6{
                 mb10.push(t1.elapsed().as_secs_f32());
-            } else if sizes[j]=="100MB"{
+            } else if j==7{
                 mb100.push(t1.elapsed().as_secs_f32());
             }
             println!("Time taken:{:?} File Size:{}",t1.elapsed().as_secs_f32(),sizes[j]);
         }
     }
+    println!("\n\n\n");
+    println!("{} --- 5KB:  {:?}s\n",cc_algo,kb5.clone());
+    println!("{} --- 10KB:  {:?}s\n",cc_algo,kb10.clone());
+    println!("{} --- 100KB:  {:?}s\n",cc_algo,kb100.clone());
+    println!("{} --- 200KB:  {:?}s\n",cc_algo,kb200.clone());
+    println!("{} --- 500KB:  {:?}s\n",cc_algo,kb500.clone());
+    println!("{} --- 1MB:  {:?}s\n",cc_algo,mb1.clone());
+    println!("{} --- 10MB:  {:?}s\n",cc_algo,mb10.clone());
+    println!("{} --- 100MB:  {:?}s\n",cc_algo,mb100.clone());
     let mut results = OpenOptions::new().append(true).create(true).open(rf_name).expect("File cannot be opened");
     let _ = results.write((format!("\n\n\n")).as_bytes());
     let _ = results.write((format!("{} --- 5KB:  {:?}s\n",cc_algo,favg_vec(kb5.clone()))).as_bytes());
@@ -276,12 +285,12 @@ fn test_fairness(cc_algo: &str){
 }
     
 fn favg_vec(vals: Vec<f32>) -> f32{
+    let vals = vals.to_owned();
     let mut sum = 0.0;
-    for i in 0..vals.len()-1{
+    for i in 0..vals.len(){
         sum = sum + vals[i];
     }
-    return sum/vals.len() as f32;
-    
+    return sum/(vals.len() as f32) as f32;
 }
 /*
     Keep reading from socket until there is nothing more left to read.
