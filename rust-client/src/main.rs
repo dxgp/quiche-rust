@@ -168,10 +168,11 @@ fn main(){
     //test_fairness("BBR2");
     let args : Vec<String> = env::args().collect();
     test_cc_time(args[1].as_str(),args[2].as_str());
+    //test_fairness(args[1].as_str(),args[2].as_str());
     // test_cc_time("RENO");
 }
 
-fn test_fairness(cc_algo: &str){
+fn test_fairness(cc_algo: &str,file_name: &str){
     let mut buf = [0;65535]; //total buffer
     let mut out = [0;MAX_DATAGRAM_SIZE]; //out buffer. Set to 8kB
     //create the config for quiche
@@ -196,7 +197,7 @@ fn test_fairness(cc_algo: &str){
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();
 
-    for i in 0..2 {
+    for i in 0..1 {
         let start = time::Instant::now();
         let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
         // if let Some(dir) = std::env::var_os("QLOGDIR") {
@@ -278,7 +279,7 @@ fn test_fairness(cc_algo: &str){
                 last_elapsed = new_elapsed;
                 last_data = new_data;
                 println!("Time:{:?},Data transferred:{},,Bandwidth:{:?}Mbps",total_time,data_diff,data_diff/time_diff * 8.0/1000000.0);
-                let mut results = OpenOptions::new().append(true).create(true).open("quic_bandwidth.txt").expect("File cannot be opened");
+                let mut results = OpenOptions::new().append(true).create(true).open(file_name).expect("File cannot be opened");
                 let _ = results.write(format!("Time:{:?},Data transferred:{},Bandwidth:{:?}\n",total_time,data_diff,data_diff/time_diff * 8.0/1000000.0).as_bytes());
                 total_time = total_time + 1;
             }
