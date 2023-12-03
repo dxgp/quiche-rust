@@ -28,7 +28,7 @@ fn main(){
     // let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
     // config.set_application_protos(&[b"example-proto"]);
     let args: Vec<String> = env::args().collect();
-    let cc_algo = &args[2];
+    let cc_algo = &args[1];
 
 
     let mut buf = [0;65535];

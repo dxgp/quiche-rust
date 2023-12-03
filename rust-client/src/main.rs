@@ -11,7 +11,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 
-fn test_cc_time(cc_algo: &str){
+fn test_cc_time(cc_algo: &str,rf_name:&str){
     println!("CONGESTION CONTROL ALGO:{}",cc_algo);
 
     let mut buf = [0;65535]; //total buffer
@@ -47,7 +47,7 @@ fn test_cc_time(cc_algo: &str){
     let mut mb1: Vec<f32> = Vec::new();
     let mut mb10: Vec<f32> = Vec::new();
     let mut mb100: Vec<f32> = Vec::new();
-    for i in 0..2 {
+    for i in 0..10 {
         for j in 1..8{
             let start = time::Instant::now();
             let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
@@ -141,7 +141,7 @@ fn test_cc_time(cc_algo: &str){
             println!("Time taken:{:?} File Size:{}",t1.elapsed().as_secs_f32(),sizes[j]);
         }
     }
-    let mut results = OpenOptions::new().append(true).create(true).open("results.txt").expect("File cannot be opened");
+    let mut results = OpenOptions::new().append(true).create(true).open(rf_name).expect("File cannot be opened");
     let _ = results.write((format!("\n\n\n")).as_bytes());
     let _ = results.write((format!("{} --- 5KB:  {:?}s\n",cc_algo,favg_vec(kb5.clone()))).as_bytes());
     let _ = results.write((format!("{} --- 10KB:  {:?}s\n",cc_algo,favg_vec(kb10.clone()))).as_bytes());
@@ -155,8 +155,9 @@ fn test_cc_time(cc_algo: &str){
 
 
 fn main(){
-    test_fairness("BBR2");
-    // test_cc_time("BBR");
+    //test_fairness("BBR2");
+    let args : Vec<String> = env::args().collect();
+    test_cc_time(args[1].as_str(),args[2].as_str());
     // test_cc_time("RENO");
 }
 
@@ -221,6 +222,9 @@ fn test_fairness(cc_algo: &str){
         let mut req_sent = false;
         let mut http3_conn = None;
         req_start = Instant::now();
+        let mut last_elapsed = req_start.elapsed().as_secs_f64();
+        let stats = conn.stats();
+        let mut last_data = ((stats.recv_bytes as f64)+(stats.sent_bytes as f64)+((stats.recv+stats.sent) as f64)*32.0);
         loop {
             // println!("RECV BYTES:{}",stats.recv_bytes);
             poll.poll(&mut events, conn.timeout()).unwrap();
@@ -253,6 +257,16 @@ fn test_fairness(cc_algo: &str){
             if conn.is_closed() {
                 println!("connection closed, {:?}, time = {}", conn.stats(),start.elapsed().as_secs());
                 break;
+            }
+            let new_elapsed = req_start.elapsed().as_secs_f64();
+            let time_diff = new_elapsed - last_elapsed;
+            if time_diff>1.0{
+                let stats = conn.stats();
+                let new_data = ((stats.recv_bytes as f64)+(stats.sent_bytes as f64)+((stats.recv+stats.sent) as f64)*32.0);
+                let data_diff = new_data - last_data;
+                last_elapsed = new_elapsed;
+                last_data = new_data;
+                println!("Data transferred:{},Time:{:?},Bandwidth:{:?}Mbps",data_diff,time_diff,data_diff/time_diff * 8.0/1000000.0);
             }
         }
         let stats = conn.stats();
