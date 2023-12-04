@@ -1,84 +1,53 @@
-from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import Node
-from mininet.log import setLogLevel, info
+from mininet.link import TCLink
+from mininet.node import Host,OVSKernelSwitch
 from mininet.cli import CLI
+from mininet.node import Node
+from mininet.topo import Topo
 
 
-class LinuxRouter(Node):
-    def config(self, **params):
-        super(LinuxRouter, self).config(**params)
-        self.cmd('sysctl net.ipv4.ip_forward=1')
 
-    def terminate(self):
-        self.cmd('sysctl net.ipv4.ip_forward=0')
-        super(LinuxRouter, self).terminate()
-
-
-class NetworkTopo(Topo):
-    def build(self, **_opts):
-        # Add 2 routers in two different subnets
-        r1 = self.addHost('r1', cls=LinuxRouter, ip='10.0.0.1/24')
-        r2 = self.addHost('r2', cls=LinuxRouter, ip='10.1.0.1/24')
-
-        # Add 2 switches
-        s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-
-        # Add host-switch links in the same subnet
-        self.addLink(s1,
-                     r1,
-                     intfName2='r1-eth1',
-                     params2={'ip': '10.0.0.1/24'})
-
-        self.addLink(s2,
-                     r2,
-                     intfName2='r2-eth1',
-                     params2={'ip': '10.1.0.1/24'})
-
-        # Add router-router link in a new subnet for the router-router connection
-        self.addLink(r1,
-                     r2,
-                     intfName1='r1-eth2',
-                     intfName2='r2-eth2',
-                     params1={'ip': '10.100.0.1/24'},
-                     params2={'ip': '10.100.0.2/24'})
-
-        # Adding hosts specifying the default route
-        h1 = self.addHost(name='h1',
-                          ip='10.0.0.251/24',
-                          defaultRoute='via 10.0.0.1')
-        h3 = self.addHost(name='h3',
-                          ip='10.0.0.252/24',
-                          defaultRoute='via 10.0.0.1')
-        h2 = self.addHost(name='h2',
-                          ip='10.1.0.252/24',
-                          defaultRoute='via 10.1.0.1')
-        h4 = self.addHost(name='h4',
-                          ip='10.1.0.252/24',
-                          defaultRoute='via 10.1.0.1')
-
-        # Add host-switch links
-        self.addLink(h1, s1)
-        self.addLink(h2, s2)
-        self.addLink(h3, s1)
-        self.addLink(h4, s2)
-
-
-def run():
-    topo = NetworkTopo()
-    net = Mininet(topo=topo)
-
-    # Add routing for reaching networks that aren't directly connected
-    info(net['r1'].cmd("ip route add 10.1.0.0/24 via 10.100.0.2 dev r1-eth2"))
-    info(net['r2'].cmd("ip route add 10.0.0.0/24 via 10.100.0.1 dev r2-eth2"))
-
+def run_lab():
+    net = Mininet(topo=None,link=TCLink,build=False)
+    c0 = net.addController('c0',ip='127.0.0.1',port=6653)
+    h1 = net.addHost('h1',cls=Host,ip='10.0.0.1/24',defaultRoute="dev h1-eth0")
+    h2 = net.addHost('h2',cls=Host,ip='10.0.0.2/24',defaultRoute="dev h2-eth0")
+    h3 = net.addHost('h3',cls=Host,ip='10.0.0.3/24',defaultRoute="dev h3-eth0")
+    h4 = net.addHost('h4',cls=Host,ip='10.0.0.4/24',defaultRoute="dev h4-eth0")
+    s1 = net.addSwitch('s1',cls=OVSKernelSwitch)
+    s2 = net.addSwitch('s2',cls=OVSKernelSwitch)
+    net.addLink(s1,s2,intfName="s1-eth1",intfName2="s2-eth1",bw=100,rtt="112ms")
+    net.addLink(h1,s1,intfName2="s1-eth3")
+    net.addLink(h3,s1,intfName2="s1-eth2")
+    net.addLink(h2,s2,intfName2="s2-eth2")
+    net.addLink(h4,s2,intfName2="s2-eth3")
+    c0.start()
+    net.build()
+    net.get("s1").start([c0])
+    net.get("s2").start([c0])
     net.start()
-    cli = CLI(net)
-    cli.do_xterm(net['h1'])
+
+    # print(h2.cmd("cd rust-server"))
+    # print(h1.cmd("cd rust-client/target/debug"))
+    # print(h1.cmd("./rust-client -- BBR"))
+    # h2.cmd("pkill -9 rust-server")
+
+
+    # h2.cmd("./rust-server -- BBR2 &")
+    # print(h1.cmd("./rust-client -- BBR2"))
+    # h2.cmd("pkill -9 rust-server")
+
+    # h2.cmd("./rust-server -- CUBIC &")
+    # print(h1.cmd("./rust-client -- CUBIC"))
+    # h2.cmd("pkill -9 rust-server")
+
+
+    # h2.cmd("./rust-server -- RENO &")
+    # print(h1.cmd("./rust-client -- RENO"))
+    # h2.cmd("pkill -9 rust-server")
+
+    CLI(net)
     net.stop()
 
-
-if __name__ == '__main__':
-    setLogLevel('info')
-    run()
+if __name__=='__main__':
+    run_lab()

@@ -164,6 +164,158 @@ fn test_cc_time(cc_algo: &str,rf_name:&str){
 }
 
 
+fn test_cc_time_multistream(cc_algo: &str,rf_name:&str){
+    println!("CONGESTION CONTROL ALGO:{}",cc_algo);
+
+    let mut buf = [0;65535]; //total buffer
+    let mut out = [0;MAX_DATAGRAM_SIZE]; //out buffer. Set to 8kB
+    //create the config for quiche
+    let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
+    set_config_params(&mut config);
+    let _ = config.set_cc_algorithm_name(cc_algo);
+    // Setup connection id
+    let mut scid = [0;quiche::MAX_CONN_ID_LEN];
+    SystemRandom::new().fill(&mut scid[..]).unwrap();
+    let scid = quiche::ConnectionId::from_ref(&scid);
+
+    //setup the event loop
+    let mut poll = mio::Poll::new().unwrap();
+    let mut events = mio::Events::with_capacity(1024);
+    let local_addr: SocketAddr;
+    let peer_addr: SocketAddr;
+    let mut socket: UdpSocket;
+    (socket,local_addr,peer_addr) = setup_sockets();
+
+    //register socket with mio events
+    poll.registry()
+        .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
+        .unwrap();
+    
+    let mut num_loops = 0;
+    let mut kb5: Vec<f32> = Vec::new();
+    let mut kb10: Vec<f32> = Vec::new();
+    let mut kb100: Vec<f32> = Vec::new();
+    let mut kb200: Vec<f32> = Vec::new();
+    let mut kb500: Vec<f32> = Vec::new();
+    let mut mb1: Vec<f32> = Vec::new();
+    let mut mb10: Vec<f32> = Vec::new();
+    let mut mb100: Vec<f32> = Vec::new();
+    for i in 0..5 {
+        for j in 0..8{
+            let start = time::Instant::now();
+            let mut conn = quiche::connect(None, &scid,local_addr, peer_addr, &mut config).unwrap();
+            // if let Some(dir) = std::env::var_os("QLOGDIR") {
+            //     let id = format!("{scid:?}");
+            //     let writer = make_qlog_writer(&dir, "client", &id);
+            //     conn.set_qlog(
+            //         std::boxed::Box::new(writer),
+            //         "quiche-client qlog".to_string(),
+            //         format!("{} id={}", "quiche-client qlog", id),
+            //     );
+            //     // conn.set_qlog_with_level(std::boxed::Box::new(writer), 
+            //     // "quiche-client qlog".to_string(),
+            //     // format!("{} id={}", "quiche-client qlog", id), 
+            //     // quiche::QlogLevel::);
+            // }
+            //establish connection
+            let file_str = format!("http://10.0.0.2/files/rand{}.dat",j);
+            let file_url = file_str.as_str();
+            let url = Url::parse(file_url).unwrap();
+            //debug print
+            // println!(
+            //     "connecting to {:} from {:} with scid {}",
+            //     peer_addr,
+            //     socket.local_addr().unwrap(),
+            //     hex_dump(&scid)
+            // );
+            
+            send_initial_packet(&mut conn, &mut out, &socket);// send initial packet
+        
+            let h3_config = quiche::h3::Config::new().unwrap(); //create config got http3
+            let req = create_h3_request(url); //create http3 request with headers
+            let t1 = Instant::now();
+            let req_start = std::time::Instant::now();
+            let mut req_sent = false;
+            let mut http3_conn = None;
+            let sizes = ["5KB","10KB","100KB","200KB","500KB","1MB","10MB","100MB"];
+            loop {
+                let stats = conn.stats();
+                // println!("RECV BYTES:{}",stats.recv_bytes);
+                poll.poll(&mut events, conn.timeout()).unwrap();
+                read_from_socket(&mut conn, &mut buf, &socket, &events, local_addr); // read response of initial packet
+                if conn.is_closed() {
+                    println!("connection closed, {:?}, time = {}", conn.stats(),start.elapsed().as_secs());
+                    break;
+                }
+                // Create a new HTTP/3 connection once the QUIC connection is established.
+                if conn.is_established() && http3_conn.is_none() {
+                    http3_conn = Some(
+                        quiche::h3::Connection::with_transport(&mut conn, &h3_config)
+                        .expect("Unable to create HTTP/3 connection, check the server's uni stream limit and window size"),
+                    );
+                }
+                // Send HTTP requests once the QUIC connection is established, and until
+                // all requests have been sent.
+                if let Some(h3_conn) = &mut http3_conn {
+                    if !req_sent {
+                        //println!("sending HTTP request {:?}", req);
+                        h3_conn.send_request(&mut conn, &req, true).unwrap();
+                        req_sent = true;
+                    }
+                }
+                
+                process_http3_responses(&mut http3_conn, &mut conn, &mut buf, req_start);
+                send_written_packets(&mut conn, &socket,&mut out);
+                
+                //println!("{:?}",conn.stats());
+                if conn.is_closed() {
+                    println!("connection closed, {:?}, time = {}", conn.stats(),start.elapsed().as_secs());
+                    break;
+                }
+                //let _ = tx.send((stats.recv_bytes as f64)+(stats.sent_bytes as f64)+((stats.recv+stats.sent) as f64)*32.0).unwrap();
+            }
+            if j==0 {
+                kb5.push(t1.elapsed().as_secs_f32());
+            } else if j==1{
+                kb10.push(t1.elapsed().as_secs_f32());
+            } else if j==2{
+                kb100.push(t1.elapsed().as_secs_f32());
+            } else if j==3{
+                kb200.push(t1.elapsed().as_secs_f32());
+            } else if j==4{
+                kb500.push(t1.elapsed().as_secs_f32());
+            } else if j==5{
+                mb1.push(t1.elapsed().as_secs_f32());
+            } else if j==6{
+                mb10.push(t1.elapsed().as_secs_f32());
+            } else if j==7{
+                mb100.push(t1.elapsed().as_secs_f32());
+            }
+            println!("Time taken:{:?} File Size:{}",t1.elapsed().as_secs_f32(),sizes[j]);
+        }
+    }
+    println!("\n\n\n");
+    println!("{} --- 5KB:  {:?}s\n",cc_algo,kb5.clone());
+    println!("{} --- 10KB:  {:?}s\n",cc_algo,kb10.clone());
+    println!("{} --- 100KB:  {:?}s\n",cc_algo,kb100.clone());
+    println!("{} --- 200KB:  {:?}s\n",cc_algo,kb200.clone());
+    println!("{} --- 500KB:  {:?}s\n",cc_algo,kb500.clone());
+    println!("{} --- 1MB:  {:?}s\n",cc_algo,mb1.clone());
+    println!("{} --- 10MB:  {:?}s\n",cc_algo,mb10.clone());
+    println!("{} --- 100MB:  {:?}s\n",cc_algo,mb100.clone());
+    let mut results = OpenOptions::new().append(true).create(true).open(rf_name).expect("File cannot be opened");
+    let _ = results.write((format!("\n\n\n")).as_bytes());
+    let _ = results.write((format!("{} --- 5KB:  {:?}s\n",cc_algo,favg_vec(kb5.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 10KB:  {:?}s\n",cc_algo,favg_vec(kb10.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 100KB:  {:?}s\n",cc_algo,favg_vec(kb100.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 200KB:  {:?}s\n",cc_algo,favg_vec(kb200.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 500KB:  {:?}s\n",cc_algo,favg_vec(kb500.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 1MB:  {:?}s\n",cc_algo,favg_vec(mb1.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 10MB:  {:?}s\n",cc_algo,favg_vec(mb10.clone()))).as_bytes());
+    let _ = results.write((format!("{} --- 100MB:  {:?}s\n",cc_algo,favg_vec(mb100.clone()))).as_bytes());
+}
+
+
 fn main(){
     //test_fairness("BBR2");
     let args : Vec<String> = env::args().collect();

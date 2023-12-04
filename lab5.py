@@ -16,7 +16,7 @@ def run_lab():
     h4 = net.addHost('h4',cls=Host,ip='10.0.0.4/24',defaultRoute="dev h4-eth0")
     s1 = net.addSwitch('s1',cls=OVSKernelSwitch)
     s2 = net.addSwitch('s2',cls=OVSKernelSwitch)
-    net.addLink(s1,s2,intfName="s1-eth1",intfName2="s2-eth1",bw=100,loss=1,rtt="112ms")
+    net.addLink(s1,s2,intfName="s1-eth1",intfName2="s2-eth1",bw=50,loss=1,rtt="112ms")
     net.addLink(h1,s1,intfName2="s1-eth3")
     net.addLink(h3,s1,intfName2="s1-eth2")
     net.addLink(h2,s2,intfName2="s2-eth2")
